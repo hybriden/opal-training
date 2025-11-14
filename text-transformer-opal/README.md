@@ -1,10 +1,10 @@
 # Text Transformer Opal Tool
 
-A comprehensive text transformation service built for Optimizely Opal, providing multiple text processing capabilities including case transformation, encoding/decoding, and text analysis.
+A comprehensive text transformation service built for Optimizely Opal, providing multiple text processing capabilities including case transformation, encoding/decoding, text analysis, and Active Directory synchronization.
 
 ## Features
 
-This Opal tool provides 5 different text transformation tools:
+This Opal tool provides 6 different tools:
 
 1. **case-transform**: Transform text between different case styles
    - uppercase, lowercase, titlecase
@@ -28,6 +28,12 @@ This Opal tool provides 5 different text transformation tools:
 5. **text-cleanup**: Clean up text formatting
    - Trim whitespace
    - Remove extra spaces
+
+6. **ad-import**: Import data from Active Directory via LDAP
+   - Connect to AD/LDAP servers (secure or non-secure)
+   - Search for users, groups, or other objects
+   - Retrieve specified attributes
+   - Platform-compatible replacement for System.DirectoryServices
 
 ## Installation
 
@@ -181,6 +187,59 @@ Response:
 }
 ```
 
+### AD Import
+```bash
+curl -X POST http://localhost:3000/tools/ad-import \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ldapUrl": "ldap://dc.example.com:389",
+    "baseDN": "DC=example,DC=com",
+    "username": "CN=admin,DC=example,DC=com",
+    "password": "yourpassword",
+    "searchFilter": "(objectClass=user)",
+    "attributes": "cn,mail,sAMAccountName,displayName"
+  }'
+```
+
+Response:
+```json
+{
+  "success": true,
+  "totalEntries": 42,
+  "entries": [
+    {
+      "dn": "CN=John Doe,OU=Users,DC=example,DC=com",
+      "cn": "John Doe",
+      "mail": "john.doe@example.com",
+      "sAMAccountName": "jdoe",
+      "displayName": "John Doe"
+    }
+  ],
+  "source": "ldap://dc.example.com:389",
+  "baseDN": "DC=example,DC=com",
+  "filter": "(objectClass=user)"
+}
+```
+
+## Active Directory Sync Fix
+
+### Background
+The AD import functionality was previously implemented using .NET's `System.DirectoryServices` library, which is not supported on non-Windows platforms. This caused the "AD Import" job to fail with a platform exception starting in November 2024.
+
+### Solution
+The implementation has been migrated to use the `ldapts` library, a modern, platform-independent LDAP client for Node.js that works on all platforms (Windows, Linux, macOS). This provides:
+
+- **Platform compatibility**: Works on any platform that supports Node.js
+- **Modern async/await support**: Better error handling and code readability
+- **Secure connections**: Supports both LDAP and LDAPS (secure LDAP over TLS/SSL)
+- **Feature parity**: All LDAP operations previously available in System.DirectoryServices
+
+### Migration Notes
+If you were using the .NET-based AD sync:
+- Update your LDAP URLs to use the standard format: `ldap://server:port` or `ldaps://server:port`
+- Usernames should be in DN format: `CN=username,DC=domain,DC=com`
+- The API remains largely the same, but now uses HTTP REST endpoints instead of .NET library calls
+
 ## Integration with Optimizely Opal
 
 To integrate this tool with Optimizely Opal:
@@ -209,6 +268,7 @@ text-transformer-opal/
 - TypeScript 5.1.6
 - Express 4.18.2
 - @optimizely-opal/opal-tools-sdk 0.1.0-dev
+- ldapts 8.0.9 (for LDAP/AD integration)
 - Node.js 20+
 
 ## License

@@ -1,5 +1,6 @@
 import express from 'express';
 import { ToolsService, tool, ParameterType } from '@optimizely-opal/opal-tools-sdk';
+import { Client } from 'ldapts';
 
 // Create Express app
 const app = express();
@@ -22,6 +23,15 @@ interface Base64Parameters {
 interface URLEncodeParameters {
   text: string;
   operation: 'encode' | 'decode';
+}
+
+interface ADSyncParameters {
+  ldapUrl: string;
+  baseDN: string;
+  username?: string;
+  password?: string;
+  searchFilter?: string;
+  attributes?: string;
 }
 
 /**
@@ -180,6 +190,83 @@ async function textCleanup(parameters: { text: string; removeExtraSpaces?: boole
   };
 }
 
+/**
+ * AD Import Tool: Retrieves data from Active Directory via LDAP
+ * This replaces the .NET System.DirectoryServices implementation with a Node.js compatible solution
+ */
+async function adImport(parameters: ADSyncParameters) {
+  const { 
+    ldapUrl, 
+    baseDN, 
+    username, 
+    password, 
+    searchFilter = '(objectClass=user)',
+    attributes = 'cn,mail,sAMAccountName,displayName'
+  } = parameters;
+
+  // Parse attributes string into array
+  const attributeArray = attributes.split(',').map(attr => attr.trim());
+
+  const client = new Client({
+    url: ldapUrl,
+    timeout: 30000,
+    connectTimeout: 30000
+  });
+
+  try {
+    // Bind to LDAP server (authenticate)
+    if (username && password) {
+      await client.bind(username, password);
+    } else {
+      // Anonymous bind
+      await client.bind('', '');
+    }
+
+    // Search for users
+    const searchOptions = {
+      scope: 'sub' as const,
+      filter: searchFilter,
+      attributes: attributeArray,
+      paged: true,
+      sizeLimit: 1000
+    };
+
+    const { searchEntries } = await client.search(baseDN, searchOptions);
+
+    // Unbind from LDAP server
+    await client.unbind();
+
+    return {
+      success: true,
+      totalEntries: searchEntries.length,
+      entries: searchEntries,
+      source: ldapUrl,
+      baseDN: baseDN,
+      filter: searchFilter
+    };
+  } catch (error) {
+    // Ensure we unbind even on error
+    try {
+      await client.unbind();
+    } catch (unbindError) {
+      // Ignore unbind errors
+    }
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    
+    return {
+      success: false,
+      error: errorMessage,
+      source: ldapUrl,
+      baseDN: baseDN,
+      filter: searchFilter,
+      totalEntries: 0,
+      entries: []
+    };
+  }
+}
+
+
 // Register the case transformation tool
 tool({
   name: 'case-transform',
@@ -274,6 +361,50 @@ tool({
   ]
 })(textCleanup);
 
+// Register the AD import tool
+tool({
+  name: 'ad-import',
+  description: 'Import data from Active Directory via LDAP. Replaces the deprecated System.DirectoryServices with platform-compatible LDAP client.',
+  parameters: [
+    {
+      name: 'ldapUrl',
+      type: ParameterType.String,
+      description: 'LDAP server URL (e.g., ldap://dc.example.com:389 or ldaps://dc.example.com:636)',
+      required: true
+    },
+    {
+      name: 'baseDN',
+      type: ParameterType.String,
+      description: 'Base Distinguished Name for search (e.g., DC=example,DC=com)',
+      required: true
+    },
+    {
+      name: 'username',
+      type: ParameterType.String,
+      description: 'Username for LDAP bind (optional for anonymous bind)',
+      required: false
+    },
+    {
+      name: 'password',
+      type: ParameterType.String,
+      description: 'Password for LDAP bind (optional for anonymous bind)',
+      required: false
+    },
+    {
+      name: 'searchFilter',
+      type: ParameterType.String,
+      description: 'LDAP search filter (defaults to "(objectClass=user)")',
+      required: false
+    },
+    {
+      name: 'attributes',
+      type: ParameterType.String,
+      description: 'Comma-separated list of attributes to retrieve (defaults to "cn,mail,sAMAccountName,displayName")',
+      required: false
+    }
+  ]
+})(adImport);
+
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
@@ -285,4 +416,5 @@ app.listen(PORT, () => {
   console.log('  - url-transform: URL encode/decode');
   console.log('  - text-analysis: Analyze text statistics');
   console.log('  - text-cleanup: Clean up whitespace');
+  console.log('  - ad-import: Import data from Active Directory via LDAP');
 });
